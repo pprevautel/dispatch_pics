@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 from PyQt5 import QtCore
 import piexif
+import shutil
 
 
 class PicThread(QtCore.QThread):
@@ -61,10 +62,14 @@ class PicThread(QtCore.QThread):
 
             # copie ou deplaement du fichier
             new_file_path = os.path.join(folder, os.path.basename(path))
-            if self._copy:
-                QtCore.QFile.copy(path, new_file_path)
-            else:
-                QtCore.QFile.rename(path, new_file_path)
+            try:
+                if self._copy:
+                    shutil.copy2(path, new_file_path)
+                else:
+                    shutil.move(path, new_file_path)
+            except (shutil.Error, OSError) as e:
+                print(str(e))
+                continue
 
             # change metadatas
             if self._dec != 0 and self._changeExif is True:
