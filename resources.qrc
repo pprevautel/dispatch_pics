@@ -2,5 +2,6 @@
     <qresource prefix="/">
         <file>resources/styles.css</file>
         <file>resources/start.png</file>
+        <file>resources/stop.png</file>
     </qresource>
 </RCC>

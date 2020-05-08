@@ -1,11 +1,9 @@
-from datetime import datetime, timedelta
-import os
 from PyQt5 import QtCore, QtGui
 from PyQt5 import QtWidgets
-import piexif
-import shutil
+from pic_thread import PicThread
 import params
 import resources
+
 
 class Dialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -19,6 +17,10 @@ class Dialog(QtWidgets.QDialog):
         stream = file.readAll()
         self.setStyleSheet(str(stream.data(), encoding='utf-8'))
 
+        # initialisation du thread
+        self.thread = PicThread()
+
+        # mise en place des widgets
         layout = QtWidgets.QGridLayout(self)
 
         hbl1 = QtWidgets.QHBoxLayout()
@@ -41,8 +43,8 @@ class Dialog(QtWidgets.QDialog):
         self.sb.setMaximum(12)
         hbl2.addWidget(self.sb)
 
-        spaceItem = QtWidgets.QSpacerItem(10, 0, QtWidgets.QSizePolicy.Fixed)
-        hbl2.addSpacerItem(spaceItem)
+        space_item = QtWidgets.QSpacerItem(10, 0, QtWidgets.QSizePolicy.Fixed)
+        hbl2.addSpacerItem(space_item)
 
         self.cbCopy = QtWidgets.QCheckBox("Copier", self)
         self.cbCopy.setCheckState(QtCore.Qt.Checked)
@@ -51,19 +53,33 @@ class Dialog(QtWidgets.QDialog):
         self.cb = QtWidgets.QCheckBox("Modifier les données Exif", self)
         hbl2.addWidget(self.cb)
 
-        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close | QtWidgets.QDialogButtonBox.Ok, self)
-        bb.button(QtWidgets.QDialogButtonBox.Ok).setIcon(QtGui.QIcon(":/resources/start.png"))
-        bb.button(QtWidgets.QDialogButtonBox.Close).setText("Quitter")
-        hbl2.addWidget(bb)
+        hbl_buttons = QtWidgets.QHBoxLayout()
+        hbl_buttons.setContentsMargins(5, 0, 5, 0)
+        self.pb_start = QtWidgets.QPushButton(QtGui.QIcon(":/resources/start.png"),'', self)
+        self.pb_stop = QtWidgets.QPushButton(QtGui.QIcon(":/resources/stop.png"),'', self)
+        self.pb_stop.setEnabled(False)
+        pb_quit = QtWidgets.QPushButton("Quitter", self)
+        hbl_buttons.addWidget(self.pb_start)
+        hbl_buttons.addWidget(self.pb_stop)
+        hbl_buttons.addWidget(pb_quit)
+        hbl2.addLayout(hbl_buttons)
 
         layout.addItem(hbl1, 0, 0, 1, 1)
         layout.addItem(hbl2, 1, 0, 1, 1)
         self.pbar = QtWidgets.QProgressBar(self)
         layout.addWidget(self.pbar, 2, 0, 1, 1)
 
-        bb.rejected.connect(self.reject)
-        bb.accepted.connect(self.dispatch)
+        # signaux
+        self.pb_start.clicked.connect(self.on_start)
+        self.pb_stop.clicked.connect(self.thread.terminate)
+        pb_quit.clicked.connect(self.reject)
+
         browse_btn.clicked.connect(self.on_browse_directory)
+        self.sb.valueChanged.connect(lambda: self.thread.set_time_difference(self.sb.value()))
+        self.cb.stateChanged.connect(lambda: self.thread.set_change_exif(self.cb.isChecked()))
+        self.cbCopy.stateChanged.connect(lambda: self.thread.set_copy(self.cbCopy.isChecked()))
+        self.thread.finished.connect(self.on_finished)
+        self.thread.progress.connect(self.on_progress)
 
     def on_browse_directory(self):
         dir = QtWidgets.QFileDialog.getExistingDirectory(
@@ -73,56 +89,29 @@ class Dialog(QtWidgets.QDialog):
         if dir is not None:
             self.dir_le.setText(dir)
             self.dir_le.setToolTip(dir)
+            self.thread.set_directory(dir)
 
-    def dispatch(self):
-        self.pbar.reset()
-        count = 0
+    def on_progress(self, value):
+        self.pbar.setValue(value)
 
+    def on_start(self):
         directory = self.dir_le.text()
         if not directory:
             return
 
-        dec = self.sb.value()
-
         # comptage des fichiers
-        qdir = QtCore.QDir(directory)
-        list = qdir.entryList(["*.jpg", "*.jpeg"], QtCore.QDir.Files)
+        dir = QtCore.QDir(directory)
+        files = dir.entryList(["*.jpg", "*.jpeg"], QtCore.QDir.Files)
+        if not len(files):
+            return
+
+        self.pbar.setMaximum(len(files))
+        self.pb_start.setEnabled(False)
+        self.pb_stop.setEnabled(True)
+
+        self.thread.start()
+
+    def on_finished(self):
         self.pbar.reset()
-        self.pbar.setMaximum(len(list))
-
-        it = QtCore.QDirIterator(directory, ["*.jpg", "*.jpeg"], QtCore.QDir.Files)
-        while it.hasNext():
-            path = it.next()
-
-            # Mise a jour de la progress bar
-            count += 1
-            self.pbar.setValue(count)
-
-            metadatas = piexif.load(path)
-            if piexif.ExifIFD.DateTimeOriginal not in metadatas['Exif']:
-                continue
-
-            str_date = str(metadatas['Exif'][piexif.ExifIFD.DateTimeOriginal], 'UTF-8')
-            date = datetime.strptime(str_date, '%Y:%m:%d %H:%M:%S')
-            if dec != 0:
-                date += timedelta(hours=dec)
-
-            folder = '{}/{}'.format(directory, date.strftime('%Y-%m-%d'))
-            if not os.path.exists(folder):
-                try:
-                    os.mkdir(folder)
-                except OSError:
-                    print("Echec de la création du répertoire %s" % folder)
-                    continue
-
-            # copie du fichier
-            shutil.copy2(path, folder)
-
-            # change metadatas
-            if dec != 0 and self.cb.isChecked():
-                filepath = '{}/{}'.format(folder, os.path.basename(path))
-
-                metadatas['Exif'][piexif.ExifIFD.DateTimeOriginal] = date.strftime('%Y:%m:%d %H:%M:%S')
-                metadatas['Exif'][piexif.ExifIFD.DateTimeDigitized] = date.strftime('%Y:%m:%d %H:%M:%S')
-                exif_bytes = piexif.dump(metadatas)
-                piexif.insert(exif_bytes, filepath)
+        self.pb_start.setEnabled(True)
+        self.pb_stop.setEnabled(False)
