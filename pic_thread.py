@@ -1,13 +1,16 @@
 import os
+import sys
 from datetime import datetime, timedelta
 from PyQt5 import QtCore
 import piexif
 import shutil
+from logger import Logger
 
 
 class PicThread(QtCore.QThread):
     def __init__(self):
         QtCore.QThread.__init__(self)
+        self._logger = Logger()
 
         self._dir = None
         self._dec = 0
@@ -43,38 +46,39 @@ class PicThread(QtCore.QThread):
             count += 1
             self.progress.emit(count)
 
-            metadatas = piexif.load(path)
-            if piexif.ExifIFD.DateTimeOriginal not in metadatas['Exif']:
+            exif_infos = piexif.load(path)
+            if piexif.ExifIFD.DateTimeOriginal not in exif_infos['Exif']:
                 continue
 
-            str_date = str(metadatas['Exif'][piexif.ExifIFD.DateTimeOriginal], 'UTF-8')
+            str_date = str(exif_infos['Exif'][piexif.ExifIFD.DateTimeOriginal], 'UTF-8')
             date = datetime.strptime(str_date, '%Y:%m:%d %H:%M:%S')
             if self._dec != 0:
                 date += timedelta(hours=self._dec)
 
             folder = os.path.join(self._dir, date.strftime('%Y-%m-%d'))
-            if not os.path.exists(folder):
-                try:
-                    os.mkdir(folder)
-                except OSError:
-                    print("Echec de la création du répertoire %s" % folder)
-                    continue
 
-            # copie ou deplaement du fichier
-            new_file_path = os.path.join(folder, os.path.basename(path))
             try:
+                if not os.path.exists(folder):
+                    os.mkdir(folder)
+
+                # copie ou deplaement du fichier
+                new_file_path = os.path.join(folder, os.path.basename(path))
                 if self._copy:
                     shutil.copy2(path, new_file_path)
                 else:
                     shutil.move(path, new_file_path)
-            except (shutil.Error, OSError) as e:
-                print(str(e))
-                continue
 
-            # change metadatas
-            if self._dec != 0 and self._changeExif is True:
-                metadatas['Exif'][piexif.ExifIFD.DateTimeOriginal] = date.strftime('%Y:%m:%d %H:%M:%S')
-                metadatas['Exif'][piexif.ExifIFD.DateTimeDigitized] = date.strftime('%Y:%m:%d %H:%M:%S')
-                exif_bytes = piexif.dump(metadatas)
+                # change meta_datas
+                if self._dec == 0:
+                    continue
+
+                if self._changeExif is False:
+                    continue
+
+                exif_infos['Exif'][piexif.ExifIFD.DateTimeOriginal] = date.strftime('%Y:%m:%d %H:%M:%S')
+                exif_infos['Exif'][piexif.ExifIFD.DateTimeDigitized] = date.strftime('%Y:%m:%d %H:%M:%S')
+                exif_bytes = piexif.dump(exif_infos)
                 piexif.insert(exif_bytes, new_file_path)
+            except os.Exception as e:
+                self._logger.log(sys.exc_info()[0])
 
