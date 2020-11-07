@@ -61,7 +61,7 @@ class PicThread(QtCore.QThread):
                 if not os.path.exists(folder):
                     os.mkdir(folder)
 
-                # copie ou deplaement du fichier
+                # copie ou deplacement du fichier
                 new_file_path = os.path.join(folder, os.path.basename(path))
                 if self._copy:
                     shutil.copy2(path, new_file_path)
